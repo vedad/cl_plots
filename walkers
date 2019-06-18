@@ -1,0 +1,182 @@
+#!/usr/bin/env python
+
+from __future__ import (print_function, division)
+
+import numpy as np
+import matplotlib.pyplot as plt
+import matplotlib.ticker as plticker
+from matplotlib.gridspec import GridSpec
+import argparse
+import os
+
+""" A script that takes a command-line argument specifying the path to an emcee
+comma-separated posterior file that contains the flattened posterior
+distribution, one column for each parameter, and an additional three columns for
+the likelihood, step number, and walker number. The first line of the file
+contains comma-separated
+
+In order to run anywhere on your computer, the path to this file needs to be
+added to your .bashrc or .bash_profile, e.g. add the following line to either
+file:
+
+    export PATH="/path/to/this/file:$PATH"
+
+Then, the script can be called from the terminal with e.g.
+
+    >> walkers /path/to/distribution.csv
+
+which will save the figure `walkers.png` in the root directory provided, in this
+case `/path/to/walkers.png`. A portion of the distribution can be discarded with
+the --burn_in flag, providing an integer number that is less than the number of
+steps of each individual walker.  """
+
+def plot_samples(samples, labels):
+    lnprob, chain = samples[:,:,0], samples[:,:,1:]
+    nwalkers, nsteps, ndims = chain.shape
+
+    gs  = GridSpec(ndims+1, 1)
+    fig = plt.figure(figsize=(15,int(3*ndims)))
+
+    color_cycler = plt.rcParams['axes.prop_cycle'].by_key()['color']
+    n_cycler     = len(color_cycler)
+
+    # plot the chains
+    for i in xrange(ndims+1):
+        ax = fig.add_subplot(gs[i,0])
+        
+        # plot log likelihood and parameter chains
+        for j in xrange(nwalkers):
+            if i == 0:
+                ax.plot(lnprob[j], linewidth=0.5, alpha=1.0,
+                        color=color_cycler[j%n_cycler])
+            ax.plot(chain[j,:,i-1], linewidth=0.5, alpha=1.0,
+                    color=color_cycler[j%n_cycler])
+
+        # remove x-tick labels except for bottom subplot
+        if i != ndims:
+            ax.xaxis.set_ticklabels([])
+
+        # set labels
+        ax.set_xlim([0, nsteps])
+        ax.set_ylabel(labels[i])
+
+        # set maxmimum number of y-ticks 
+        ax.yaxis.set_major_locator(plticker.MaxNLocator(nbins=5))
+
+    ax.set_xlabel('steps')
+    gs.update(hspace=0.03)
+
+    return fig
+
+
+def plot_walkers(filename, burn_in=0, display='all'):
+
+    # get root dir to save plot in
+    root = os.path.split(filename)[0]
+
+    # check for exisiting file as to not overwrite
+    if (display == 'all' 
+        and 
+        os.path.isfile(os.path.join(root, 'walkers.png'))):
+        raise IOError("""
+            walkers.png already exists in the path provided. Rename or delete
+            the exisiting file.""")
+
+#    assert display == 'all'\
+#           and\
+#           not os.path.isfile(os.path.join(root, 'walkers.png')), """
+#            walkers.png already exists in the path provided. Rename or delete
+#            the exisiting file."""
+
+    # NOTE to self: not including skiprows throws ValueError if header exists
+    # NOTE to self: wrong delimiter throws ValueError
+    try:
+        flatchain = np.loadtxt(filename, delimiter=',', skiprows=1)
+    # in case of wrong delimiter
+    except ValueError:
+        flatchain = np.loadtxt(filename, skiprows=1)
+
+    # get header
+    with open(filename, 'r') as f:
+        # read header, removing any newline characters
+        header_str = f.readline().split(r"\\")[0]
+    # create a list from the string
+    header_lst = header_str.split(',')
+
+    # last three cols are lnlike, step and walker, so not free parameters
+    params     = header_lst[:-3] 
+
+    # get dimensions of posteriors
+    nwalkers   = int(flatchain[:,-1].max()+1)
+    nsteps     = int(flatchain[:,-2].max()+1)
+    ndims      = len(params)
+
+    # get likelihoods and 3d chains (nwalkers, nsteps, ndims)
+    lnprob     = flatchain[:,-3].reshape(nwalkers, nsteps)
+    chain      = flatchain[:,:-3].reshape(nwalkers, nsteps, ndims)
+
+    # discard burn-in steps if provided
+    if burn_in != 0:
+        lnprob     = lnprob[:, burn_in:]
+        flatchain  = chain[:, burn_in:, :].reshape(-1, ndims)
+        chain      = chain[:, burn_in:, :]
+        nsteps    -= burn_in
+
+    # remove underscores from headers if there are any (can throw errors)
+    ylabels = []
+    for i in xrange(ndims):
+        ylabels.append(''.join(params[i].split('_')))
+
+    ylabels = np.array(ylabels)
+    samples = np.dstack((lnprob, chain))
+
+    # if want to display a plot of specific parameters
+    if display != 'all':
+        display = display.split(',')
+
+        # remove log likelihood if specified since this is default anyway
+        if 'log likelihood' in display:
+            display.pop(display.index('log likelihood'))
+
+        # select specified parameters
+        selected = np.array([params.index(name) for name in display], dtype=int)
+        samples  = np.dstack((lnprob, chain[:,:,selected]))
+        ylabels  = np.array(ylabels)[selected]
+        np.append('log likelihood', ylabels)
+
+    ylabels = np.append('log likelihood', ylabels)
+    fig = plot_samples(samples, ylabels)
+
+    if display != 'all':
+        plt.show()
+    else:
+        fig.savefig(os.path.join(root, 'walkers.png'), bbox_inches='tight')
+
+    return 
+
+if __name__ == '__main__':
+    parser = argparse.ArgumentParser(description="""
+                                     Plot emcee chains and saves
+                                     the figure in the same directory as the 
+                                     specified path to the file
+                                     """)
+    parser.add_argument('filename', type=str,
+                        help="""
+                        the full system path to a flattened posterior file
+                        of shape (nwalkers*nsteps, ndims+3), where nwalkers,
+                        nsteps, and ndims are the number of walkers, steps and
+                        free parameters, plus an additional three columns for
+                        likelihoods, step number, and walker number. This is
+                        equivalent to the
+                        emcee.EnsembleSampler.sampler.flatchain property,
+                        plus the three additional columns as mentioned above.
+                        """)
+    parser.add_argument('--burn_in', type=int, default=0,
+                        help='discard the first `burn_in` steps')
+    parser.add_argument('--display', type=str, default='all',
+                        help='display walkers for given parameter')
+
+    args = parser.parse_args()
+
+    plot_walkers(args.filename, burn_in=args.burn_in, display=args.display)
+

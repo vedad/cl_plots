@@ -1,0 +1,95 @@
+#!/usr/bin/env python
+
+from __future__ import (print_function, division)
+
+import numpy as np
+import matplotlib.pyplot as plt
+import argparse
+import os
+import corner
+
+def plot_corner(filename, burn_in=0):
+
+    # get root dir to save plot in
+    root = os.path.split(filename)[0]
+
+    # check for exisiting file as to not overwrite
+    assert not os.path.isfile(os.path.join(root, 'corner.png')), """
+            corner.png already exists in the path provided. Rename or delete
+            the exisiting file."""
+
+    # NOTE to self: not including skiprows throws ValueError if header exists
+    # NOTE to self: wrong delimiter throws ValueError
+    try:
+        flatchain = np.loadtxt(filename, delimiter=',', skiprows=1)
+    # in case of wrong delimiter
+    except ValueError:
+        flatchain = np.loadtxt(filename, skiprows=1)
+
+    # get header
+    with open(filename, 'r') as f:
+        # read header, removing any newline characters
+        header_str = f.readline().split(r"\\")[0]
+    # create a list from the string
+    header_lst = header_str.split(',')
+
+    # last three cols are lnlike, step and walker, so not free parameters
+    params     = header_lst[:-3] 
+
+    # get dimensions of posteriors
+    nwalkers   = int(flatchain[:,-1].max()+1)
+    nsteps     = int(flatchain[:,-2].max()+1)
+    ndims      = len(params)
+
+    # get likelihoods and 3d chains (nwalkers, nsteps, ndims)
+    lnprob     = flatchain[:,-3].reshape(nwalkers, nsteps)
+    chain      = flatchain[:,:-3].reshape(nwalkers, nsteps, ndims)
+
+    # discard burn-in steps if provided
+    if burn_in != 0:
+        lnprob     = lnprob[:, burn_in:]
+        flatchain  = chain[:, burn_in:, :].reshape(-1, ndims)
+        chain      = chain[:, burn_in:, :]
+        nsteps    -= burn_in
+
+    # remove underscores from headers if there are any (can throw errors)
+    labels = []
+    for i in xrange(ndims):
+        labels.append(''.join(params[i].split('_')))
+
+    try:
+        fig = corner.corner(flatchain, labels=labels,
+                            show_titles=True, 
+                            quantiles=[0.16, 0.84])
+    except ValueError: # if quantile error due to samples incl. burn-in
+        fig = corner.corner(flatchain, labels=labels)
+
+    fig.savefig(os.path.join(root, 'corner.png'), bbox_inches='tight')
+
+    return
+
+
+if __name__ == '__main__':
+    parser = argparse.ArgumentParser(description="""
+                                     Plot corner plot and saves
+                                     the figure in the same directory as the 
+                                     specified path to the file
+                                     """)
+    parser.add_argument('filename', type=str,
+                        help="""
+                        the full system path to a flattened posterior file
+                        of shape (nwalkers*nsteps, ndims+3), where nwalkers,
+                        nsteps, and ndims are the number of walkers, steps and
+                        free parameters, plus an additional three columns for
+                        likelihoods, step number, and walker number. This is
+                        equivalent to the
+                        emcee.EnsembleSampler.sampler.flatchain property,
+                        plus the three additional columns as mentioned above.
+                        """)
+    parser.add_argument('--burn_in', type=int, default=0,
+                        help='discard the first `burn_in` steps')
+
+    args = parser.parse_args()
+
+    plot_corner(args.filename, burn_in=args.burn_in)
+
