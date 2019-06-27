@@ -49,8 +49,9 @@ def plot_samples(samples, labels):
             if i == 0:
                 ax.plot(lnprob[j], linewidth=0.5, alpha=1.0,
                         color=color_cycler[j%n_cycler])
-            ax.plot(chain[j,:,i-1], linewidth=0.5, alpha=1.0,
-                    color=color_cycler[j%n_cycler])
+            else:
+                ax.plot(chain[j,:,i-1], linewidth=0.5, alpha=1.0,
+                        color=color_cycler[j%n_cycler])
 
         # remove x-tick labels except for bottom subplot
         if i != ndims:
